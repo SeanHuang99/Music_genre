@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
-
+import torch.optim as optim  # 修正拼写错误
 from scripts.data_preparation01 import prepare_data  # 确保您已经有 prepare_data 函数
 
 class FCNN(nn.Module):
@@ -24,8 +23,11 @@ class FCNN(nn.Module):
 def train_and_evaluate(num_epochs):
     train_loader, test_loader, input_size, num_classes = prepare_data()
 
-    # 初始化模型
-    model = FCNN(input_size, num_classes)
+    # 检查 CUDA 是否可用，如果有 GPU 可用，则使用 GPU，否则使用 CPU
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # 初始化模型并将其转移到选定的设备上
+    model = FCNN(input_size, num_classes).to(device)
 
     # 定义损失函数和优化器
     criterion = nn.CrossEntropyLoss()
@@ -39,6 +41,9 @@ def train_and_evaluate(num_epochs):
         total = 0
 
         for inputs, labels in train_loader:
+            # 将输入和标签转移到选定的设备上
+            inputs, labels = inputs.to(device), labels.to(device)
+
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -62,6 +67,8 @@ def train_and_evaluate(num_epochs):
 
     with torch.no_grad():
         for inputs, labels in test_loader:
+            # 将输入和标签转移到选定的设备上
+            inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)

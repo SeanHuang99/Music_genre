@@ -10,7 +10,7 @@ def load_genre_data():
                            names=['trackId', 'majority_genre', 'minority_genre'])
 
     # 读取训练/测试划分数据
-    split_df = pd.read_csv('../data/msd_tagtraum_cd2c_fixed_train1000.cls', sep='\t', comment='#', header=None,
+    split_df = pd.read_csv('../data/msd_tagtraum_cd2c_stratified_train55.cls', sep='\t', comment='#', header=None,
                            names=['trackId', 'split'])
 
     return genre_df, split_df
