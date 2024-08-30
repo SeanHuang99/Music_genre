@@ -1,3 +1,4 @@
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -9,6 +10,7 @@ import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.preprocessing import LabelEncoder
 
 # 获取当前脚本所在的目录
 curPath = os.path.abspath(os.path.dirname(__file__))
@@ -65,6 +67,11 @@ class FCNN(nn.Module):
 def train_and_evaluate(num_epochs):
     logging.info("Starting training and evaluation...")
     train_loader, test_loader, input_size, num_classes = prepare_data()
+
+    # 在这里重新创建一个 LabelEncoder 并对数据进行拟合，以恢复类别名称
+    df = pd.read_csv('../data/processed_data.csv')
+    label_encoder = LabelEncoder()
+    label_encoder.fit(df['genre'])
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"Using device: {device}")
@@ -163,11 +170,11 @@ def train_and_evaluate(num_epochs):
     logging.info(f'Test Accuracy: {test_acc:.2f}%')
 
     # 生成分类报告和混淆矩阵
-    logging.info("\n" + classification_report(true_labels, predictions))
+    logging.info("\n" + classification_report(true_labels, predictions, target_names=label_encoder.classes_))
 
     conf_matrix = confusion_matrix(true_labels, predictions)
     plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues')
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
     plt.title("Confusion Matrix")
     plt.savefig(os.path.join(rootPath, 'fcnn_confusion_matrix.png'), dpi=500)
     plt.show()
