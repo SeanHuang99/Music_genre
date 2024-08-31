@@ -69,7 +69,7 @@ def train_and_evaluate(num_epochs):
     train_loader, test_loader, input_size, num_classes = prepare_data()
 
     # 在这里重新创建一个 LabelEncoder 并对数据进行拟合，以恢复类别名称
-    df = pd.read_csv('../data/processed_data.csv')
+    df = pd.read_csv('../data/mxm_msd_genre.cls')
     label_encoder = LabelEncoder()
     label_encoder.fit(df['genre'])
 
@@ -79,10 +79,14 @@ def train_and_evaluate(num_epochs):
     model = FCNN(input_size, num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
-    scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+    scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
     best_acc = 0.0
+    best_val_loss = float('inf')
+    no_improvement_epochs = 0
+    early_stop_patience = 5
+
     train_loss_values, train_acc_values = [], []
     val_loss_values, val_acc_values = [], []
 
@@ -140,11 +144,16 @@ def train_and_evaluate(num_epochs):
 
         logging.info(f'Validation Loss: {val_epoch_loss:.4f}, Validation Accuracy: {val_epoch_acc:.2f}%')
 
-        # 仅在准确度提高时保存模型
-        if val_epoch_acc > best_acc:
-            best_acc = val_epoch_acc
+        if val_epoch_loss < best_val_loss:
+            best_val_loss = val_epoch_loss
             torch.save(model.state_dict(), 'best_model.pth')
-            logging.info(f"New best model saved with validation accuracy: {best_acc:.2f}%")
+            logging.info(f"New best model saved with validation loss: {best_val_loss:.4f}")
+            no_improvement_epochs = 0
+        else:
+            no_improvement_epochs += 1
+            if no_improvement_epochs >= early_stop_patience:
+                logging.info("Early stopping triggered.")
+                break
 
     logging.info(f'Best Validation Accuracy: {best_acc:.2f}%')
 
@@ -200,7 +209,7 @@ def train_and_evaluate(num_epochs):
     plt.show()
 
 if __name__ == "__main__":
-    train_and_evaluate(num_epochs=30)
+    train_and_evaluate(num_epochs=100)
     logging.info("Training and evaluation completed. Sending notification...")
     send_pushbullet_notification("Task completed", "Your task on the server has finished.")
     logging.info("Notification sent successfully.")

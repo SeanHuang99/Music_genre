@@ -1,8 +1,8 @@
 import torch
-from transformers import RobertaForSequenceClassification
+from transformers import BertForSequenceClassification
 
 # 加载预训练的RoBERTa分类模型
-model = RobertaForSequenceClassification.from_pretrained('/root/DissertationProject/data/models/roberta_base')
+model = BertForSequenceClassification.from_pretrained('/root/autodl-tmp/DissertationProject/models/bert_base_uncased')
 
 # 将模型加载到GPU（如果可用）
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
