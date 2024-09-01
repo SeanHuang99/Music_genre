@@ -364,7 +364,10 @@ def merge_logs(rootPath, world_size):
 def main():
     world_size = torch.cuda.device_count()
     mp.spawn(main_worker, args=(world_size,), nprocs=world_size, join=True)
-    merge_logs(rootPath, world_size)
+
+    # 等待所有进程完成后再执行merge_logs
+    if dist.get_rank() == 0:  # 只在主进程中执行
+        merge_logs(rootPath, world_size)
 
 if __name__ == "__main__":
     main()
