@@ -171,14 +171,14 @@ def main_worker(rank, world_size):
     y_train_tensor = torch.tensor(y_train)
     y_test_tensor = torch.tensor(y_test)
 
-    batch_size = 8
+    batch_size = 32
     train_dataset = TensorDataset(X_train_ids, X_train_mask, y_train_tensor)
     test_dataset = TensorDataset(X_test_ids, X_test_mask, y_test_tensor)
 
     train_sampler = DistributedSampler(train_dataset)
     test_sampler = DistributedSampler(test_dataset)
 
-    num_workers_per_gpu = 4 // world_size
+    num_workers_per_gpu = 64 // world_size
     train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, pin_memory=True, num_workers=num_workers_per_gpu)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler, pin_memory=True, num_workers=num_workers_per_gpu)
     logger.info(f"DataLoader created with batch size {batch_size} and {len(train_loader)} batches per epoch")
@@ -199,8 +199,8 @@ def main_worker(rank, world_size):
     start_time = time.time()
 
     model.train()
-    for epoch in range(start_epoch, 5):  # 从检查点的 epoch 开始继续训练
-        logger.info(f"Epoch {epoch + 1}/5 started")
+    for epoch in range(start_epoch, 30):  # 从检查点的 epoch 开始继续训练
+        logger.info(f"Epoch {epoch + 1}/10 started")
         total_loss = 0
         correct_predictions = 0
         total_predictions = 0
@@ -326,20 +326,41 @@ def main_worker(rank, world_size):
 
     cleanup(logger)
 
-def merge_logs(rootPath, world_size):
-    merged_log_file = os.path.join(rootPath, 'roberta_base_train_merged.log')
-    with open(merged_log_file, 'w') as outfile:
-        for rank in range(world_size):
-            log_file = os.path.join(rootPath, f'roberta_base_train_rank_{rank}.log')
-            with open(log_file, 'r') as infile:
-                outfile.write(infile.read())
-                outfile.write("\n")
-    print(f"Logs merged into {merged_log_file}")
+    # 在清理进程组后进行同步，确保所有日志都已写入
+    dist.barrier()
+
+    # 在主进程（rank == 0）中合并日志
+    if rank == 0:
+        merge_logs(rootPath, world_size, rank)
+
+# def merge_logs(rootPath, world_size):
+#     merged_log_file = os.path.join(rootPath, 'roberta_base_train_merged.log')
+#     with open(merged_log_file, 'w') as outfile:
+#         for rank in range(world_size):
+#             log_file = os.path.join(rootPath, f'roberta_base_train_rank_{rank}.log')
+#             with open(log_file, 'r') as infile:
+#                 outfile.write(infile.read())
+#                 outfile.write("\n")
+#     print(f"Logs merged into {merged_log_file}")
+
+def merge_logs(rootPath, world_size, rank):
+    if rank == 0:
+        merged_log_file = os.path.join(rootPath, 'roberta_base_train_merged.log')
+        with open(merged_log_file, 'w') as outfile:
+            for rank in range(world_size):
+                log_file = os.path.join(rootPath, f'roberta_base_train_rank_{rank}.log')
+                if os.path.exists(log_file):
+                    with open(log_file, 'r') as infile:
+                        outfile.write(infile.read())
+                        outfile.write("\n")
+        print(f"Logs merged into {merged_log_file}")
+    else:
+        print(f"Rank {rank} is not responsible for merging logs.")
 
 def main():
     world_size = torch.cuda.device_count()
     mp.spawn(main_worker, args=(world_size,), nprocs=world_size, join=True)
-    merge_logs(rootPath, world_size)
+    # merge_logs(rootPath, world_size)
 
 if __name__ == "__main__":
     main()
