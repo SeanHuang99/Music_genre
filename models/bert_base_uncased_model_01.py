@@ -216,7 +216,7 @@ def main_worker(rank, world_size):
     accumulation_steps = 4  # 梯度累积步数
 
     model.train()
-    for epoch in range(start_epoch, 30):
+    for epoch in range(start_epoch, 60):
         logger.info(f"Epoch {epoch + 1}/30 started")
         total_loss = 0
         correct_predictions = 0
