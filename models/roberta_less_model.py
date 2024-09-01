@@ -92,6 +92,28 @@ def save_and_cleanup_checkpoints(model, optimizer, scaler, epoch, loss, save_dir
     if len(checkpoint_files) > max_checkpoints:
         os.remove(os.path.join(save_dir, checkpoint_files[0]))
 
+class EarlyStopping:
+    def __init__(self, patience=5, verbose=False, delta=0):
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+        self.delta = delta
+
+    def __call__(self, val_loss, logger=None):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.delta:
+            self.counter += 1
+            if logger:
+                logger.info(f"EarlyStopping counter: {self.counter} out of {self.patience}")
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+
 def main_worker(rank, world_size):
     logger = setup_logger(rank, rootPath)
     setup(rank, world_size, logger)
@@ -149,14 +171,14 @@ def main_worker(rank, world_size):
     y_train_tensor = torch.tensor(y_train)
     y_test_tensor = torch.tensor(y_test)
 
-    batch_size = 32
+    batch_size = 8
     train_dataset = TensorDataset(X_train_ids, X_train_mask, y_train_tensor)
     test_dataset = TensorDataset(X_test_ids, X_test_mask, y_test_tensor)
 
     train_sampler = DistributedSampler(train_dataset)
     test_sampler = DistributedSampler(test_dataset)
 
-    num_workers_per_gpu = 64 // world_size
+    num_workers_per_gpu = 4 // world_size
     train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, pin_memory=True, num_workers=num_workers_per_gpu)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler, pin_memory=True, num_workers=num_workers_per_gpu)
     logger.info(f"DataLoader created with batch size {batch_size} and {len(train_loader)} batches per epoch")
@@ -169,6 +191,8 @@ def main_worker(rank, world_size):
 
     train_loss_values, train_acc_values = [], []
     val_loss_values, val_acc_values = [], []
+
+    early_stopping = EarlyStopping(patience=5, verbose=True)
 
     start_epoch, _ = load_checkpoint(model, optimizer, scaler, save_path='./checkpoints/latest_checkpoint.pth')
 
@@ -240,6 +264,11 @@ def main_worker(rank, world_size):
 
         save_and_cleanup_checkpoints(model, optimizer, scaler, epoch, avg_train_loss, save_dir='./checkpoints', max_checkpoints=5)
 
+        # 添加早停机制
+        early_stopping(avg_val_loss, logger=logger)
+        if early_stopping.early_stop:
+            logger.info("Early stopping triggered.")
+            break
     end_time = time.time()
     total_time = end_time - start_time
     logger.info(f"训练完成，总运行时间: {total_time // 60:.0f} 分 {total_time % 60:.0f} 秒")
