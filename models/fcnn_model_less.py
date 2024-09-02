@@ -52,7 +52,7 @@ class FCNN(nn.Module):
         self.bn3 = nn.BatchNorm1d(256)
         self.fc4 = nn.Linear(256, num_classes)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
+        self.dropout = nn.Dropout(0.6)
 
     def forward(self, x):
         x = self.relu(self.bn1(self.fc1(x)))
@@ -79,7 +79,7 @@ def train_and_evaluate(num_epochs):
     model = FCNN(input_size, num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=5e-5)
     scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
     best_acc = 0.0
