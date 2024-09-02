@@ -1,62 +1,16 @@
-# import pandas as pd
-# import sqlite3
-# import os
-# print("Current working directory: ", os.getcwd())
-#
-#
-# def load_genre_data():
-#     # 读取歌曲类别数据
-#     genre_df = pd.read_csv('../../data/msd_tagtraum_cd2c.cls', sep='\t', comment='#', header=None,
-#                            names=['trackId', 'majority_genre', 'minority_genre'])
-#
-#     # 读取训练/测试划分数据
-#     split_df = pd.read_csv('../../data/msd_tagtraum_cd2c_stratified_train55.cls', sep='\t', comment='#', header=None,
-#                            names=['trackId', 'split'])
-#
-#     return genre_df, split_df
-#
-#
-# def load_lyrics_data():
-#     # 连接到mxm_dataset.db数据库并提取歌词词袋数据
-#     conn = sqlite3.connect('../../data/mxm_dataset.db')
-#     query = "SELECT track_id, word, count FROM lyrics"
-#     lyrics_df = pd.read_sql_query(query, conn)
-#     conn.close()
-#
-#     return lyrics_df
-#
-#
-# def prepare_dataset():
-#     # 加载数据
-#     genre_df, split_df = load_genre_data()
-#     lyrics_df = load_lyrics_data()
-#
-#     # 合并数据
-#     merged_df = pd.merge(lyrics_df, genre_df[['trackId', 'majority_genre']], left_on='track_id', right_on='trackId',
-#                          how='inner')
-#     merged_df = pd.merge(merged_df, split_df, on='trackId', how='inner')
-#
-#     # 删除不必要的列
-#     merged_df.drop(columns=['trackId'], inplace=True)
-#
-#     # 重命名列
-#     merged_df.rename(columns={'track_id': 'trackId', 'majority_genre': 'genre', 'split': 'is_split'}, inplace=True)
-#
-#     # 保存处理后的数据
-#     merged_df.to_csv('../../data/processed_data.csv', index=False)
-#     print("New dataset created and saved as 'processed_data.csv'")
-#
-#
-# if __name__ == "__main__":
-#     prepare_dataset()
-
-
 import pandas as pd
 import sqlite3
 import os
 from sklearn.model_selection import train_test_split
+import nltk
+from nltk.corpus import stopwords
+from collections import Counter
 
 print("Current working directory: ", os.getcwd())
+
+# Download stopwords if not already downloaded
+nltk.download('stopwords')
+stop_words = set(stopwords.words('english'))
 
 def load_genre_data():
     # 读取歌曲类别数据
@@ -73,6 +27,21 @@ def load_lyrics_data():
 
     return lyrics_df
 
+def preprocess_words(df, stop_words):
+    # Remove stopwords
+    df['word'] = df['word'].apply(lambda x: ' '.join([word for word in x.split() if word.lower() not in stop_words]))
+
+    # Calculate word frequencies
+    word_counts = Counter(" ".join(df['word']).split())
+
+    # Define a threshold for rare words, e.g., less than 5 occurrences
+    rare_words = set([word for word, count in word_counts.items() if count < 5])
+
+    # Remove rare words
+    df['word'] = df['word'].apply(lambda x: ' '.join([word for word in x.split() if word not in rare_words]))
+
+    return df
+
 def prepare_dataset():
     # 加载数据
     genre_df = load_genre_data()
@@ -88,6 +57,9 @@ def prepare_dataset():
     # 重命名列
     merged_df.rename(columns={'track_id': 'trackId', 'majority_genre': 'genre'}, inplace=True)
 
+    # Preprocess words to remove stopwords and rare words
+    merged_df = preprocess_words(merged_df, stop_words)
+
     # 将词袋形式的单词合并成句子形式
     merged_df_grouped = merged_df.groupby(['trackId', 'genre'])['word'].apply(lambda x: ' '.join(x)).reset_index()
 
@@ -102,31 +74,10 @@ def prepare_dataset():
     final_df = pd.concat([train_df, test_df])
 
     # 保存处理后的数据
-    final_df.to_csv('../../data/mxm_msd_genre.cls', index=False)
-    print("New dataset created and saved as 'mxm_msd_genre.cls'")
+    final_df.to_csv('../../data/mxm_msd_genre_pro.cls', index=False)
+    print("New dataset created and saved as 'mxm_msd_genre_pro.cls'")
 
 if __name__ == "__main__":
     prepare_dataset()
 
 
-# def prepare_dataset():
-#     # 加载数据
-#     genre_df = load_genre_data()
-#     lyrics_df = load_lyrics_data()
-#
-#     # 合并数据，只保留majority_genre列
-#     merged_df = pd.merge(lyrics_df, genre_df[['trackId', 'majority_genre']], left_on='track_id', right_on='trackId',
-#                          how='inner')
-#
-#     # 删除不必要的列
-#     merged_df.drop(columns=['trackId'], inplace=True)
-#
-#     # 重命名列
-#     merged_df.rename(columns={'track_id': 'trackId', 'majority_genre': 'genre'}, inplace=True)
-#
-#     # 不再合并单词，将数据直接保存
-#     merged_df.to_csv('../../data/mxm_msd_genre.cls', index=False)
-#     print("New dataset created and saved as 'mxm_msd_genre.cls'")
-#
-# if __name__ == "__main__":
-#     prepare_dataset()

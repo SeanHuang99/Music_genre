@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 def prepare_data():
     # 读取CSV文件
-    df = pd.read_csv('.././data/mxm_msd_genre.cls')
+    df = pd.read_csv('.././data/mxm_msd_genre_pro.cls')
 
     # 将词袋形式的单词合并成句子形式
     df_grouped = df.groupby(['trackId', 'genre', 'is_split'])['word'].apply(lambda x: ' '.join(x)).reset_index()
