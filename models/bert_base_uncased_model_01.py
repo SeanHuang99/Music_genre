@@ -366,8 +366,8 @@ def main():
     mp.spawn(main_worker, args=(world_size,), nprocs=world_size, join=True)
 
     # 等待所有进程完成后再执行merge_logs
-    if dist.get_rank() == 0:  # 只在主进程中执行
-        merge_logs(rootPath, world_size)
+    # if dist.get_rank() == 0:  # 只在主进程中执行
+    merge_logs(rootPath, world_size)
 
 if __name__ == "__main__":
     main()
