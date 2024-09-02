@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader, TensorDataset
 import os
 import sys
@@ -52,7 +52,7 @@ class FCNN(nn.Module):
         self.bn3 = nn.BatchNorm1d(256)
         self.fc4 = nn.Linear(256, num_classes)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.6)
+        self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
         x = self.relu(self.bn1(self.fc1(x)))
@@ -79,8 +79,8 @@ def train_and_evaluate(num_epochs):
     model = FCNN(input_size, num_classes).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=5e-5)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+    scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
     best_acc = 0.0
     best_val_loss = float('inf')
@@ -113,7 +113,12 @@ def train_and_evaluate(num_epochs):
         epoch_loss = running_loss / len(train_loader.dataset)
         epoch_acc = 100 * correct / total
 
+        train_loss_values.append(epoch_loss)
+        train_acc_values.append(epoch_acc)
+
         logging.info(f'Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%')
+
+        scheduler.step()
 
         # 验证模型
         model.eval()
@@ -134,12 +139,11 @@ def train_and_evaluate(num_epochs):
         val_epoch_loss = val_loss / len(test_loader.dataset)
         val_epoch_acc = 100 * val_correct / val_total
 
+        val_loss_values.append(val_epoch_loss)
+        val_acc_values.append(val_epoch_acc)
+
         logging.info(f'Validation Loss: {val_epoch_loss:.4f}, Validation Accuracy: {val_epoch_acc:.2f}%')
 
-        # 依据验证损失调整学习率
-        scheduler.step(val_epoch_loss)
-
-        # Early stopping 和最佳模型保存逻辑
         if val_epoch_loss < best_val_loss:
             best_val_loss = val_epoch_loss
             torch.save(model.state_dict(), 'best_model.pth')
@@ -179,8 +183,7 @@ def train_and_evaluate(num_epochs):
 
     conf_matrix = confusion_matrix(true_labels, predictions)
     plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_,
-                yticklabels=label_encoder.classes_)
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
     plt.title("Confusion Matrix")
     plt.savefig(os.path.join(rootPath, 'fcnn_confusion_matrix.png'), dpi=500)
     plt.show()
