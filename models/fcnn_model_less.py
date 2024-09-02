@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, TensorDataset
 import os
 import sys
@@ -41,16 +41,18 @@ logging.getLogger().addHandler(console)
 from scripts.bagofwords.data_preparation01 import prepare_data
 from scripts.pushbullet_notify import send_pushbullet_notification
 
+
 class FCNN(nn.Module):
     def __init__(self, input_size, num_classes):
         super(FCNN, self).__init__()
-        self.fc1 = nn.Linear(input_size, 1024)
-        self.bn1 = nn.BatchNorm1d(1024)
-        self.fc2 = nn.Linear(1024, 512)
-        self.bn2 = nn.BatchNorm1d(512)
-        self.fc3 = nn.Linear(512, 256)
-        self.bn3 = nn.BatchNorm1d(256)
-        self.fc4 = nn.Linear(256, num_classes)
+        # 简化网络架构，减少每层的单元数
+        self.fc1 = nn.Linear(input_size, 512)
+        self.bn1 = nn.BatchNorm1d(512)
+        self.fc2 = nn.Linear(512, 256)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.fc3 = nn.Linear(256, 128)
+        self.bn3 = nn.BatchNorm1d(128)
+        self.fc4 = nn.Linear(128, num_classes)
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.6)
 
@@ -63,6 +65,7 @@ class FCNN(nn.Module):
         x = self.dropout(x)
         x = self.fc4(x)
         return x
+
 
 def train_and_evaluate(num_epochs):
     logging.info("Starting training and evaluation...")
@@ -80,7 +83,9 @@ def train_and_evaluate(num_epochs):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=5e-5)
-    scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
+
+    # 使用 ReduceLROnPlateau 调度器
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
 
     best_acc = 0.0
     best_val_loss = float('inf')
@@ -118,8 +123,6 @@ def train_and_evaluate(num_epochs):
 
         logging.info(f'Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%')
 
-        scheduler.step()
-
         # 验证模型
         model.eval()
         val_loss = 0.0
@@ -143,6 +146,9 @@ def train_and_evaluate(num_epochs):
         val_acc_values.append(val_epoch_acc)
 
         logging.info(f'Validation Loss: {val_epoch_loss:.4f}, Validation Accuracy: {val_epoch_acc:.2f}%')
+
+        # 调用 ReduceLROnPlateau 调度器，基于验证集损失调整学习率
+        scheduler.step(val_epoch_loss)
 
         if val_epoch_loss < best_val_loss:
             best_val_loss = val_epoch_loss
@@ -183,7 +189,8 @@ def train_and_evaluate(num_epochs):
 
     conf_matrix = confusion_matrix(true_labels, predictions)
     plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_,
+                yticklabels=label_encoder.classes_)
     plt.title("Confusion Matrix")
     plt.savefig(os.path.join(rootPath, 'fcnn_confusion_matrix.png'), dpi=500)
     plt.show()
@@ -207,6 +214,7 @@ def train_and_evaluate(num_epochs):
     plt.legend()
     plt.savefig(os.path.join(rootPath, 'fcnn_training_validation_loss.png'), dpi=500)
     plt.show()
+
 
 if __name__ == "__main__":
     train_and_evaluate(num_epochs=100)
