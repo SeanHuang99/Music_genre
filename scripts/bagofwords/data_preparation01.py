@@ -1,19 +1,22 @@
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder
+from sklearn.feature_extraction.text import CountVectorizer
+
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 
 def prepare_data():
     # 读取CSV文件
-    df = pd.read_csv('.././data/mxm_msd_genre_pro.cls')
+    df = pd.read_csv('.././data/mxm_msd_genre.cls')
 
     # 将词袋形式的单词合并成句子形式
     df_grouped = df.groupby(['trackId', 'genre', 'is_split'])['word'].apply(lambda x: ' '.join(x)).reset_index()
 
     # 使用TfidfVectorizer将文本转化为TF-IDF特征
     vectorizer = TfidfVectorizer()
+    # vectorizer = CountVectorizer()
     X = vectorizer.fit_transform(df_grouped['word'])
 
     # 将分类标签转化为数字编码
