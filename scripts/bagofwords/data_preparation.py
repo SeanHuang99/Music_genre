@@ -1,3 +1,4 @@
+import dask.dataframe as dd
 import pandas as pd
 import sqlite3
 import os
@@ -6,11 +7,13 @@ import nltk
 from nltk.corpus import stopwords
 from collections import Counter
 
+# 打印当前工作目录
 print("Current working directory: ", os.getcwd())
 
-# Download stopwords if not already downloaded
+# 下载停用词列表（如果没有下载过）
 nltk.download('stopwords')
 stop_words = set(stopwords.words('english'))
+
 
 def load_genre_data():
     # 读取歌曲类别数据
@@ -18,8 +21,9 @@ def load_genre_data():
                            names=['trackId', 'majority_genre', 'minority_genre'])
     return genre_df
 
+
 def load_lyrics_data():
-    # 连接到mxm_dataset.db数据库并提取歌词词袋数据
+    # 连接到 mxm_dataset.db 数据库并提取歌词词袋数据
     conn = sqlite3.connect('../../data/mxm_dataset.db')
     query = "SELECT track_id, word, count FROM lyrics"
     lyrics_df = pd.read_sql_query(query, conn)
@@ -27,44 +31,85 @@ def load_lyrics_data():
 
     return lyrics_df
 
+
+# 修改 preprocess_words 函数，保留 'trackId' 和 'genre' 列
 def preprocess_words(df, stop_words):
-    # Remove stopwords
-    df['word'] = df['word'].apply(lambda x: ' '.join([word for word in x.split() if word.lower() not in stop_words]))
+    words_list = []
+    counts_list = []
 
-    # Calculate word frequencies
-    word_counts = Counter(" ".join(df['word']).split())
+    for index, row in df.iterrows():
+        words = row['word'].split()
+        counts = str(row['count']).split()  # 确保 count 是字符串
 
-    # Define a threshold for rare words, e.g., less than 5 occurrences
-    rare_words = set([word for word, count in word_counts.items() if count < 5])
+        # 过滤掉 stopwords，并保持 word 和 count 同步
+        filtered_words_and_counts = [(word, count) for word, count in zip(words, counts) if
+                                     word.lower() not in stop_words]
 
-    # Remove rare words
-    df['word'] = df['word'].apply(lambda x: ' '.join([word for word in x.split() if word not in rare_words]))
+        if filtered_words_and_counts:
+            words_filtered, counts_filtered = zip(*filtered_words_and_counts)
+            words_list.append(' '.join(words_filtered))
+            counts_list.append(' '.join(counts_filtered))
+        else:
+            words_list.append('')
+            counts_list.append('')
 
-    return df
+    # 返回一个 DataFrame，同时保留 'trackId' 和 'genre'
+    result = pd.DataFrame({'trackId': df['trackId'], 'genre': df['genre'], 'word': words_list, 'count': counts_list})
+    return result
+
 
 def prepare_dataset():
     # 加载数据
     genre_df = load_genre_data()
     lyrics_df = load_lyrics_data()
 
-    # 合并数据，只保留majority_genre列
+    # 合并数据时，保留 'trackId' 列
     merged_df = pd.merge(lyrics_df, genre_df[['trackId', 'majority_genre']], left_on='track_id', right_on='trackId',
                          how='inner')
 
-    # 删除不必要的列
-    merged_df.drop(columns=['trackId'], inplace=True)
+    # 删除重复的 'trackId' 列，保留其中一个
+    merged_df = merged_df.drop(columns=['track_id'])  # 删除 'track_id' 列，保留 'trackId'
 
-    # 重命名列
-    merged_df.rename(columns={'track_id': 'trackId', 'majority_genre': 'genre'}, inplace=True)
+    # 强制将 'trackId' 列转换为字符串类型
+    merged_df['trackId'] = merged_df['trackId'].astype(str)
 
-    # Preprocess words to remove stopwords and rare words
-    merged_df = preprocess_words(merged_df, stop_words)
+    # 检查合并后的列名
+    print("Columns after merge:", merged_df.columns)
 
-    # 将词袋形式的单词合并成句子形式
-    merged_df_grouped = merged_df.groupby(['trackId', 'genre'])['word'].apply(lambda x: ' '.join(x)).reset_index()
+    # 将 pandas DataFrame 转换为 dask DataFrame
+    ddf = dd.from_pandas(merged_df, npartitions=4)
+
+    # 不删除 'trackId' 列，确保它保留到后面的 groupby 操作
+    ddf = ddf.rename(columns={'majority_genre': 'genre'})
+
+    # 再次检查列名
+    print("Columns in Dask DataFrame:", ddf.columns)
+
+    # 提供 `meta` 信息，包括 'trackId' 和 'genre'
+    meta = pd.DataFrame({'trackId': pd.Series(dtype='str'), 'genre': pd.Series(dtype='str'),
+                         'word': pd.Series(dtype='str'), 'count': pd.Series(dtype='str')})
+
+    # 并行处理，移除 stopwords 并保持同步，保留 'trackId' 和 'genre'
+    ddf = ddf.map_partitions(lambda df: preprocess_words(df, stop_words), meta=meta)
+
+    # 使用 Dask 进行并行 groupby 处理
+    def combine_words_and_counts(group):
+        words = group['word'].values
+        counts = group['count'].values
+        # 过滤掉空值以及空的括号对，移除没有词的计数项
+        combined = ' '.join([f"{w}({c})" for w, c in zip(words, counts) if
+                             pd.notna(w) and pd.notna(c) and w.strip() != '' and c.strip() != ''])
+        return combined
+
+    # 确保 'trackId' 和 'genre' 列存在，并且类型正确
+    ddf_grouped = ddf.groupby(['trackId', 'genre']).apply(combine_words_and_counts, meta=('x', 'str')).reset_index()
+
+    # 将 Dask DataFrame 转换为 pandas DataFrame
+    merged_df_grouped = ddf_grouped.compute()
 
     # 按照每个类别进行等比例分割训练集和测试集
-    train_df, test_df = train_test_split(merged_df_grouped, test_size=0.2, stratify=merged_df_grouped['genre'], random_state=42)
+    train_df, test_df = train_test_split(merged_df_grouped, test_size=0.2, stratify=merged_df_grouped['genre'],
+                                         random_state=42)
 
     # 添加分割标记
     train_df['is_split'] = 'TRAIN'
@@ -77,7 +122,6 @@ def prepare_dataset():
     final_df.to_csv('../../data/mxm_msd_genre_pro.cls', index=False)
     print("New dataset created and saved as 'mxm_msd_genre_pro.cls'")
 
+
 if __name__ == "__main__":
     prepare_dataset()
-
-
