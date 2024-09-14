@@ -75,7 +75,7 @@ def train_and_evaluate(num_epochs):
     train_loader, test_loader, input_size, num_classes = prepare_data()
 
     # 在这里重新创建一个 LabelEncoder 并对数据进行拟合，以恢复类别名称
-    df = pd.read_csv('../data/mxm_msd_genre_pro.cls')
+    df = pd.read_csv('../data/mxm_msd_genre.cls')
     label_encoder = LabelEncoder()
     label_encoder.fit(df['genre'])
 
