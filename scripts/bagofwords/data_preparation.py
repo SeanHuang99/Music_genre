@@ -7,9 +7,6 @@ from sklearn.model_selection import train_test_split
 # 打印当前工作目录
 print("Current working directory: ", os.getcwd())
 
-# 自定义简单的停用词列表
-simple_stop_words = {"you", "and", "i", "the", "to", "of", "a", "it", "in"}
-
 def load_genre_data():
     # 读取歌曲类别数据
     genre_df = pd.read_csv('../../data/msd_tagtraum_cd2c.cls', sep='\t', comment='#', header=None,
@@ -26,7 +23,7 @@ def load_lyrics_data():
     return lyrics_df
 
 # 修改 preprocess_words 函数，保留 'trackId' 和 'genre' 列
-def preprocess_words(df, stop_words):
+def preprocess_words(df):
     words_list = []
     counts_list = []
 
@@ -34,17 +31,9 @@ def preprocess_words(df, stop_words):
         words = row['word'].split()
         counts = str(row['count']).split()  # 确保 count 是字符串
 
-        # 过滤掉自定义 stopwords，并保持 word 和 count 同步
-        filtered_words_and_counts = [(word, count) for word, count in zip(words, counts) if
-                                     word.lower() not in stop_words]
-
-        if filtered_words_and_counts:
-            words_filtered, counts_filtered = zip(*filtered_words_and_counts)
-            words_list.append(' '.join(words_filtered))
-            counts_list.append(' '.join(counts_filtered))
-        else:
-            words_list.append('')
-            counts_list.append('')
+        # 不过滤词汇，直接保留所有词汇及其计数
+        words_list.append(' '.join(words))
+        counts_list.append(' '.join(counts))
 
     # 返回一个 DataFrame，同时保留 'trackId' 和 'genre'
     result = pd.DataFrame({'trackId': df['trackId'], 'genre': df['genre'], 'word': words_list, 'count': counts_list})
@@ -81,8 +70,8 @@ def prepare_dataset():
     meta = pd.DataFrame({'trackId': pd.Series(dtype='str'), 'genre': pd.Series(dtype='str'),
                          'word': pd.Series(dtype='str'), 'count': pd.Series(dtype='str')})
 
-    # 并行处理，移除简单停用词并保持同步，保留 'trackId' 和 'genre'
-    ddf = ddf.map_partitions(lambda df: preprocess_words(df, simple_stop_words), meta=meta)
+    # 并行处理，不去除停用词，保留 'trackId' 和 'genre'
+    ddf = ddf.map_partitions(lambda df: preprocess_words(df), meta=meta)
 
     # 使用 Dask 进行并行 groupby 处理
     def combine_words_and_counts(group):
@@ -111,8 +100,8 @@ def prepare_dataset():
     final_df = pd.concat([train_df, test_df])
 
     # 保存处理后的数据
-    final_df.to_csv('../../data/mxm_msd_genre_pro_simple_stopwords.cls', index=False)
-    print("New dataset created and saved as 'mxm_msd_genre_pro_simple_stopwords.cls'")
+    final_df.to_csv('../../data/mxm_msd_genre_pro_no_stopwords.cls', index=False)
+    print("New dataset created and saved as 'mxm_msd_genre_pro_no_stopwords.cls'")
 
 if __name__ == "__main__":
     prepare_dataset()
