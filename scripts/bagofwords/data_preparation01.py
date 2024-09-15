@@ -21,7 +21,7 @@ def extract_words_with_count(text):
 
 def prepare_data():
     # 读取CSV文件
-    df = pd.read_csv('../data/mxm_msd_genre_pro.cls')
+    df = pd.read_csv('../data/mxm_msd_genre_pro_no_stopwords.cls')
 
     # 提取出 `word_with_count` 字段中的单词部分，并根据 count 重复单词
     df['word'] = df['x'].apply(extract_words_with_count)
