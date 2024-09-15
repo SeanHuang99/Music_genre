@@ -30,7 +30,7 @@ def prepare_data():
     df_grouped = df.groupby(['trackId', 'genre', 'is_split'])['word'].apply(lambda x: ' '.join(x)).reset_index()
 
     # 使用TfidfVectorizer将文本转化为TF-IDF特征
-    vectorizer = TfidfVectorizer()
+    vectorizer = CountVectorizer()
     X = vectorizer.fit_transform(df_grouped['word'])
 
     # 将分类标签转化为数字编码
