@@ -1,10 +1,11 @@
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_extraction.text import CountVectorizer
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-import re  # 用于提取单词
+from gensim.models import Word2Vec
+from gensim.models import KeyedVectors
+import numpy as np
+import re
+from sklearn.preprocessing import LabelEncoder
 
 
 def extract_words_with_count(text):
@@ -14,9 +15,9 @@ def extract_words_with_count(text):
         matches = re.findall(r'(\w+)\((\d+)\)', text)
         # 将单词重复 'count' 次，形成最终的词汇列表
         words = [word for word, count in matches for _ in range(int(count))]
-        return ' '.join(words)
+        return words
     else:
-        return ''  # Return an empty string if the input is not valid
+        return []  # Return an empty list if the input is not valid
 
 
 def prepare_data():
@@ -27,11 +28,26 @@ def prepare_data():
     df['word'] = df['x'].apply(extract_words_with_count)
 
     # 将词袋形式的单词合并成句子形式
-    df_grouped = df.groupby(['trackId', 'genre', 'is_split'])['word'].apply(lambda x: ' '.join(x)).reset_index()
+    df_grouped = df.groupby(['trackId', 'genre', 'is_split'])['word'].apply(
+        lambda x: [word for sublist in x for word in sublist]).reset_index()
 
-    # 使用TfidfVectorizer将文本转化为TF-IDF特征
-    vectorizer = CountVectorizer()
-    X = vectorizer.fit_transform(df_grouped['word'])
+    # 使用预训练的Word2Vec模型或自训练模型
+    # 加载预训练的Word2Vec模型（示例中使用Google的模型）
+    # model = KeyedVectors.load_word2vec_format('path_to_pretrained_word2vec.bin', binary=True)
+
+    # 使用自训练模型
+    sentences = df_grouped['word'].tolist()
+    model = Word2Vec(sentences, vector_size=100, window=5, min_count=1, workers=4)
+
+    def get_word_vectors(words, model, vector_size=100):
+        """将单词列表转换为词向量矩阵"""
+        vectors = [model.wv[word] for word in words if word in model.wv]
+        if len(vectors) == 0:
+            return np.zeros(vector_size)
+        return np.mean(vectors, axis=0)
+
+    # 转换文本为词向量
+    X = np.array([get_word_vectors(words, model) for words in df_grouped['word']])
 
     # 将分类标签转化为数字编码
     label_encoder = LabelEncoder()
@@ -43,9 +59,9 @@ def prepare_data():
     y_train = y[df_grouped['is_split'] == 'TRAIN']
     y_test = y[df_grouped['is_split'] == 'TEST']
 
-    # 将稀疏矩阵转为密集张量
-    X_train = torch.tensor(X_train.toarray(), dtype=torch.float32)
-    X_test = torch.tensor(X_test.toarray(), dtype=torch.float32)
+    # 将数据转为PyTorch张量
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
     y_train = torch.tensor(y_train, dtype=torch.long)
     y_test = torch.tensor(y_test, dtype=torch.long)
 
@@ -55,7 +71,7 @@ def prepare_data():
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-    return train_loader, test_loader, len(vectorizer.get_feature_names_out()), len(label_encoder.classes_)
+    return train_loader, test_loader, X_train.shape[1], len(label_encoder.classes_)
 
 
 # 如果这个文件是直接运行的，那么可以如下执行数据准备
