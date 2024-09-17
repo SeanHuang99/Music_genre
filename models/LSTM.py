@@ -1,9 +1,10 @@
 import logging
 import os
 import torch
+import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
@@ -12,7 +13,8 @@ import seaborn as sns
 import sys
 from torchtext.vocab import GloVe
 from torch.cuda.amp import GradScaler, autocast
-import pandas as pd
+import multiprocessing
+
 # Setting up directories
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
@@ -84,10 +86,10 @@ def train_and_evaluate(num_epochs, device_ids):
     # Initialize model's embedding layer with pre-trained GloVe weights
     model.module.embedding.weight.data.copy_(glove.vectors)
 
-    # Define loss function and optimizer
+    # Define adaptive optimizer (AdamW) and learning rate scheduler (ReduceLROnPlateau)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
-    scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-5)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=3, verbose=True)
 
     # Mixed Precision Training
     scaler = GradScaler()
@@ -100,10 +102,13 @@ def train_and_evaluate(num_epochs, device_ids):
     train_loss_values, train_acc_values = [], []
     val_loss_values, val_acc_values = [], []
 
+    # Automatically determine the number of CPU cores for num_workers
+    cpu_count = multiprocessing.cpu_count()  # Get the number of CPU cores
+    logging.info(f'Using {cpu_count} CPU cores for DataLoader.')
+
     # Set the DataLoader with optimized number of workers
-    # Utilize the available 48 CPUs for data loading
-    train_loader = DataLoader(train_loader.dataset, batch_size=16, shuffle=True, num_workers=60)
-    test_loader = DataLoader(test_loader.dataset, batch_size=16, shuffle=False, num_workers=60)
+    train_loader = DataLoader(train_loader.dataset, batch_size=16, shuffle=True, num_workers=cpu_count)
+    test_loader = DataLoader(test_loader.dataset, batch_size=16, shuffle=False, num_workers=cpu_count)
 
     # Training loop
     for epoch in range(num_epochs):
@@ -135,8 +140,6 @@ def train_and_evaluate(num_epochs, device_ids):
 
         logging.info(f'Epoch {epoch + 1}/{num_epochs}, Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%')
 
-        scheduler.step()
-
         # Validation step
         model.eval()
         val_loss, val_correct, val_total = 0.0, 0, 0
@@ -158,6 +161,9 @@ def train_and_evaluate(num_epochs, device_ids):
         val_acc_values.append(val_epoch_acc)
 
         logging.info(f'Validation Loss: {val_epoch_loss:.4f}, Validation Accuracy: {val_epoch_acc:.2f}%')
+
+        # Adjust learning rate if validation loss plateaus
+        scheduler.step(val_epoch_loss)
 
         if val_epoch_loss < best_val_loss:
             best_val_loss = val_epoch_loss
@@ -223,10 +229,9 @@ def train_and_evaluate(num_epochs, device_ids):
     plt.show()
 
 if __name__ == "__main__":
-    # Get available GPU IDs for DataParallel
-    device_ids = list(range(torch.cuda.device_count()))
+    # Detect multiple GPUs and set the device_ids
+    num_gpus = torch.cuda.device_count()
+    device_ids = list(range(num_gpus))  # Automatically assigns all available GPUs
 
-    # Use multiple GPUs and optimize with 48 CPU cores
     train_and_evaluate(num_epochs=50, device_ids=device_ids)
-
     logging.info("Training and evaluation completed.")
