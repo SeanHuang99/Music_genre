@@ -2,6 +2,8 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 import re  # 用于提取单词
@@ -30,7 +32,8 @@ def prepare_data():
     df_grouped = df.groupby(['trackId', 'genre', 'is_split'])['word'].apply(lambda x: ' '.join(x)).reset_index()
 
     # 使用TfidfVectorizer将文本转化为TF-IDF特征
-    vectorizer = CountVectorizer()
+    # vectorizer = CountVectorizer()
+    vectorizer = TfidfVectorizer()
     X = vectorizer.fit_transform(df_grouped['word'])
 
     # 将分类标签转化为数字编码
