@@ -9,6 +9,7 @@ import sys
 import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
+from transformers import BertTokenizer, BertModel
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 
@@ -32,43 +33,80 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console.setFormatter(formatter)
 logging.getLogger().addHandler(console)
 
-from scripts.bagofwords.data_preparation01 import prepare_data
 from scripts.pushbullet_notify import send_pushbullet_notification
 
+# BERT tokenizer and model setup
+model_path = '/mnt/parscratch/users/acr23sh/DissertationProject/models/pretrained_bert_base_uncased/'
+tokenizer = BertTokenizer.from_pretrained(model_path)
+bert_model = BertModel.from_pretrained(model_path)
 
-class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes, num_layers=2):
-        super(LSTMModel, self).__init__()
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, num_classes)
+class LSTMWithBERTEmbeddings(nn.Module):
+    def __init__(self, bert_model, hidden_size, num_classes, num_layers=2):
+        super(LSTMWithBERTEmbeddings, self).__init__()
+        self.bert = bert_model
+        self.lstm = nn.LSTM(bert_model.config.hidden_size, hidden_size, num_layers, batch_first=True, bidirectional=True)
+        self.fc = nn.Linear(hidden_size * 2, num_classes)  # hidden_size * 2 because of bidirectional LSTM
         self.relu = nn.ReLU()
 
-    def forward(self, x):
-        x = x.unsqueeze(1)  # Add sequence length dimension (batch_size, 1, input_size)
-        out, _ = self.lstm(x)
+    def forward(self, input_ids, attention_mask):
+        # Freeze the BERT layers if needed
+        with torch.no_grad():
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            hidden_state = outputs.last_hidden_state  # Shape: (batch_size, seq_len, hidden_size)
+
+        out, _ = self.lstm(hidden_state)  # Pass BERT embeddings through LSTM
         out = out[:, -1, :]  # Take the output of the last time step
         out = self.fc(self.relu(out))
         return out
 
 
+def prepare_data(file_path, tokenizer):
+    # Load dataset
+    df = pd.read_csv(file_path)
+
+    # Extract text and labels
+    texts = df['x'].tolist()
+    labels = df['genre'].tolist()
+
+    # Tokenize using BERT tokenizer
+    inputs = tokenizer(texts, return_tensors='pt', max_length=512, padding=True, truncation=True)
+
+    # Encode labels
+    label_encoder = LabelEncoder()
+    labels_encoded = label_encoder.fit_transform(labels)
+
+    # Create TensorDataset
+    dataset = TensorDataset(inputs['input_ids'], inputs['attention_mask'], torch.tensor(labels_encoded))
+
+    # Train-test split
+    train_size = int(0.8 * len(dataset))
+    test_size = len(dataset) - train_size
+    train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
+
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+
+    return train_loader, test_loader, len(label_encoder.classes_), label_encoder
+
+
 def train_and_evaluate(num_epochs):
     logging.info("Starting training and evaluation...")
-    train_loader, test_loader, input_size, num_classes = prepare_data()
 
-    df = pd.read_csv('../data/mxm_msd_genre_pro_no_stopwords.cls')
-    label_encoder = LabelEncoder()
-    label_encoder.fit(df['genre'])
+    # Prepare data
+    train_loader, test_loader, num_classes, label_encoder = prepare_data('../data/mxm_msd_genre_pro_no_stopwords.cls', tokenizer)
 
+    # Device configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"Using device: {device}")
 
-    model = LSTMModel(input_size=input_size, hidden_size=128, num_classes=num_classes).to(device)
+    # Initialize model
+    model = LSTMWithBERTEmbeddings(bert_model, hidden_size=128, num_classes=num_classes).to(device)
 
+    # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
     scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
 
-    best_acc = 0.0
     best_val_loss = float('inf')
     no_improvement_epochs = 0
     early_stop_patience = 5
@@ -82,16 +120,16 @@ def train_and_evaluate(num_epochs):
         correct = 0
         total = 0
 
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+        for input_ids, attention_mask, labels in train_loader:
+            input_ids, attention_mask, labels = input_ids.to(device), attention_mask.to(device), labels.to(device)
 
             optimizer.zero_grad()
-            outputs = model(inputs)
+            outputs = model(input_ids, attention_mask)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item() * inputs.size(0)
+            running_loss += loss.item() * input_ids.size(0)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
@@ -106,18 +144,18 @@ def train_and_evaluate(num_epochs):
 
         scheduler.step()
 
-        # Validate the model
+        # Validation step
         model.eval()
         val_loss = 0.0
         val_correct = 0
         val_total = 0
 
         with torch.no_grad():
-            for inputs, labels in test_loader:
-                inputs, labels = inputs.to(device), labels.to(device)
-                outputs = model(inputs)
+            for input_ids, attention_mask, labels in test_loader:
+                input_ids, attention_mask, labels = input_ids.to(device), attention_mask.to(device), labels.to(device)
+                outputs = model(input_ids, attention_mask)
                 loss = criterion(outputs, labels)
-                val_loss += loss.item() * inputs.size(0)
+                val_loss += loss.item() * input_ids.size(0)
                 _, predicted = torch.max(outputs.data, 1)
                 val_total += labels.size(0)
                 val_correct += (predicted == labels).sum().item()
@@ -141,9 +179,7 @@ def train_and_evaluate(num_epochs):
                 logging.info("Early stopping triggered.")
                 break
 
-    logging.info(f'Best Validation Accuracy: {best_acc:.2f}%')
-
-    # Testing the model
+    # Final model evaluation
     model.load_state_dict(torch.load('best_lstm_model.pth'))
     model.eval()
     correct = 0
@@ -151,9 +187,9 @@ def train_and_evaluate(num_epochs):
     predictions, true_labels = [], []
 
     with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(inputs)
+        for input_ids, attention_mask, labels in test_loader:
+            input_ids, attention_mask, labels = input_ids.to(device), attention_mask.to(device), labels.to(device)
+            outputs = model(input_ids, attention_mask)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
@@ -164,18 +200,17 @@ def train_and_evaluate(num_epochs):
     test_acc = 100 * correct / total
     logging.info(f'Test Accuracy: {test_acc:.2f}%')
 
-    # Classification report and confusion matrix
+    # Generate classification report and confusion matrix
     logging.info("\n" + classification_report(true_labels, predictions, target_names=label_encoder.classes_))
-
     conf_matrix = confusion_matrix(true_labels, predictions)
+
     plt.figure(figsize=(8, 6))
-    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_,
-                yticklabels=label_encoder.classes_)
+    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
     plt.title("Confusion Matrix")
-    plt.savefig(os.path.join(rootPath, 'lstm_confusion_matrix.png'), dpi=500)
+    plt.savefig('lstm_confusion_matrix.png', dpi=500)
     plt.show()
 
-    # Accuracy plot
+    # Plot accuracy
     plt.figure(figsize=(8, 6))
     plt.plot(train_acc_values, label='Training Accuracy')
     plt.plot(val_acc_values, label='Validation Accuracy')
@@ -183,10 +218,10 @@ def train_and_evaluate(num_epochs):
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.legend()
-    plt.savefig(os.path.join(rootPath, 'lstm_training_validation_accuracy.png'), dpi=500)
+    plt.savefig('lstm_training_validation_accuracy.png', dpi=500)
     plt.show()
 
-    # Loss plot
+    # Plot loss
     plt.figure(figsize=(8, 6))
     plt.plot(train_loss_values, label='Training Loss')
     plt.plot(val_loss_values, label='Validation Loss')
@@ -194,12 +229,10 @@ def train_and_evaluate(num_epochs):
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig(os.path.join(rootPath, 'lstm_training_validation_loss.png'), dpi=500)
+    plt.savefig('lstm_training_validation_loss.png', dpi=500)
     plt.show()
-
 
 if __name__ == "__main__":
     train_and_evaluate(num_epochs=50)
-    logging.info("Training and evaluation completed. Sending notification...")
+    logging.info("Training and evaluation completed.")
     send_pushbullet_notification("Task completed", "Your task on the server has finished.")
-    logging.info("Notification sent successfully.")
