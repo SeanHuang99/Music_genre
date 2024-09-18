@@ -8,17 +8,25 @@ from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 from sklearn.dummy import DummyClassifier
 from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer
+import re  # For extracting words from 'x' column
+import numpy as np
 
-# 获取当前脚本所在的目录
+# Extract words from 'word(count)' format
+def extract_words_with_count(text):
+    """Extract words and repeat them based on their counts."""
+    if isinstance(text, str):
+        matches = re.findall(r'(\w+)\((\d+)\)', text)
+        words = [word for word, count in matches for _ in range(int(count))]
+        return ' '.join(words)
+    return ''  # Return an empty string if the input is not valid
+
+# Setting up directories
 curPath = os.path.abspath(os.path.dirname(__file__))
-
-# 找到项目根目录
 rootPath = os.path.split(curPath)[0]
-
-# 将项目根目录插入到 sys.path 的第一个位置
 sys.path.insert(0, rootPath)
 
-# 配置日志记录
+# Logging setup
 log_file = os.path.join(rootPath, 'dummy_classifier_train.log')
 logging.basicConfig(
     filename=log_file,
@@ -27,72 +35,80 @@ logging.basicConfig(
     filemode='w'
 )
 
-# 配置同时输出到控制台
+# Stream logs to console
 console = logging.StreamHandler()
 console.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console.setFormatter(formatter)
 logging.getLogger().addHandler(console)
 
-# 现在可以进行模块导入
-from scripts.bagofwords.data_preparation01 import prepare_data
 from scripts.pushbullet_notify import send_pushbullet_notification
-
 
 def train_and_evaluate():
     logging.info("Starting training and evaluation...")
 
     try:
-        # 加载数据
-        train_loader, test_loader, input_size, num_classes = prepare_data()
-        logging.info(f"Data loaded successfully with input size: {input_size} and number of classes: {num_classes}")
-    except Exception as e:
-        logging.error(f"Error loading data: {e}")
-        return
+        # Load the dataset
+        data_file_path = os.path.join(rootPath, 'data/mxm_msd_genre_pro_no_stopwords.cls')
+        df = pd.read_csv(data_file_path)
 
-    try:
-        # 在这里重新创建一个 LabelEncoder 并对数据进行拟合，以恢复类别名称
-        # df = pd.read_csv(os.path.join(rootPath, 'data/processed_data.csv'))
+        # Extract words from the 'x' column and prepare features
+        df['word'] = df['x'].apply(extract_words_with_count)
 
-        df = pd.read_csv(os.path.join(rootPath, 'data/mxm_msd_genre.cls'))
+        # Split into training and testing data
+        X = df['word']  # Text data
+        y = df['genre']  # Labels
 
+        # Use CountVectorizer to transform text data into feature vectors
+        vectorizer = CountVectorizer()
+        X_transformed = vectorizer.fit_transform(X)
+
+        # Encode the genre labels
         label_encoder = LabelEncoder()
-        label_encoder.fit(df['genre'])
-        logging.info("LabelEncoder fitted successfully.")
-    except Exception as e:
-        logging.error(f"Error processing labels: {e}")
-        return
+        y_encoded = label_encoder.fit_transform(y)
 
-    try:
-        # 准备数据
-        X = df.drop(columns=['genre'])
-        y = df['genre']
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        logging.info("Data split into train and test sets successfully.")
+        # Split the dataset into train and test sets
+        X_train, X_test, y_train, y_test = train_test_split(X_transformed, y_encoded, test_size=0.2, random_state=42)
+        logging.info(f"Data split into train and test sets. Training size: {X_train.shape[0]}, Test size: {X_test.shape[0]}")
 
-        # 定义 DummyClassifier
+        # Define DummyClassifier
         model = DummyClassifier(strategy="most_frequent")
 
-        # 训练模型
+        # Train the model
         model.fit(X_train, y_train)
         logging.info("Model trained successfully.")
 
-        # 评估模型
+        # Evaluate the model
         predictions = model.predict(X_test)
         test_acc = model.score(X_test, y_test) * 100
         logging.info(f'Test Accuracy: {test_acc:.2f}%')
     except Exception as e:
-        logging.error(f"Error during model training or evaluation: {e}")
+        logging.error(f"Error during training or evaluation: {e}")
         return
 
     try:
-        # 生成分类报告和混淆矩阵
+        # Generate classification report
+        class_report = classification_report(y_test, predictions, target_names=label_encoder.classes_, output_dict=True)
         logging.info("\n" + classification_report(y_test, predictions, target_names=label_encoder.classes_))
 
+        # Plot the precision, recall, and F1-scores
+        metrics = ['precision', 'recall', 'f1-score']
+        df_metrics = pd.DataFrame(class_report).transpose()[metrics].iloc[:-3]  # Exclude avg/total rows
+
+        plt.figure(figsize=(12, 8))
+        df_metrics.plot(kind='bar', figsize=(12, 8))
+        plt.title('Classification Report Metrics per Class')
+        plt.xticks(rotation=45, horizontalalignment="right")
+        plt.ylabel('Score')
+        plt.tight_layout()
+        plt.savefig(os.path.join(rootPath, 'classification_report_metrics.png'), dpi=300)
+        plt.show()
+        logging.info("Classification report metrics plotted and saved successfully.")
+
+        # Plot confusion matrix
         conf_matrix = confusion_matrix(y_test, predictions)
         plt.figure(figsize=(8, 6))
-        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_,
-                    yticklabels=label_encoder.classes_)
+        sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=label_encoder.classes_, yticklabels=label_encoder.classes_)
         plt.title("Confusion Matrix")
         plt.savefig(os.path.join(rootPath, 'dummy_confusion_matrix.png'), dpi=500)
         plt.show()
